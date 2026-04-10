@@ -12,6 +12,10 @@ interface CreateCallResponse {
 }
 
 async function vapiRequest<T>(pathname: string, init: RequestInit): Promise<T> {
+  if (!appConfig.vapiApiKey) {
+    throw new Error("Missing VAPI_API_KEY environment variable");
+  }
+
   const response = await fetch(`${appConfig.vapiBaseUrl}${pathname}`, {
     ...init,
     headers: {

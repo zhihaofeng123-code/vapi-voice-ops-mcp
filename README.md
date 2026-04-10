@@ -61,7 +61,7 @@ npm run dev
 
 The process starts:
 
-- an MCP server over `stdio`
+- an HTTP MCP endpoint on `http://localhost:8787/mcp`
 - an HTTP webhook listener on `http://localhost:8787/webhooks/vapi`
 
 ## MCP client configuration
@@ -86,7 +86,7 @@ Example local MCP config:
 VAPI_API_KEY=your_vapi_api_key
 VAPI_BASE_URL=https://api.vapi.ai
 VAPI_ASSISTANT_ID=your_default_assistant_id
-WEBHOOK_PORT=8787
+PORT=8787
 WEBHOOK_SECRET=optional_shared_secret
 DATA_DIR=./data
 ```

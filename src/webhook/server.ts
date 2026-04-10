@@ -1,4 +1,4 @@
-import express, { type Request, type Response } from "express";
+import type { Express, Request, Response } from "express";
 import crypto from "node:crypto";
 import { appConfig } from "../config.js";
 import { saveWebhookRecord } from "../storage/files.js";
@@ -29,10 +29,7 @@ function deriveCallId(body: unknown): string | undefined {
   return undefined;
 }
 
-export function startWebhookServer(): void {
-  const app = express();
-  app.use(express.json({ limit: "2mb" }));
-
+export function registerWebhookRoutes(app: Express): void {
   app.get("/health", (_request: Request, response: Response) => {
     response.json({ ok: true });
   });
@@ -63,9 +60,5 @@ export function startWebhookServer(): void {
     });
 
     response.json({ ok: true });
-  });
-
-  app.listen(appConfig.webhookPort, () => {
-    console.error(`Webhook server listening on http://localhost:${appConfig.webhookPort}`);
   });
 }
