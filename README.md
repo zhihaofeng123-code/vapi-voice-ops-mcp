@@ -119,6 +119,69 @@ DATA_DIR=./data
 - Sample tool input: [`examples/create-reservation-call.json`](./examples/create-reservation-call.json)
 - Example MCP config: [`examples/mcp-server-config.json`](./examples/mcp-server-config.json)
 
+## Quick HTTP tests
+
+### 1. Health check
+
+```bash
+curl http://localhost:8787/health
+```
+
+Expected response:
+
+```json
+{"ok":true}
+```
+
+### 2. Simulate a webhook
+
+```bash
+curl -X POST http://localhost:8787/webhooks/vapi \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "end-of-call-report",
+    "call": {
+      "id": "call_demo_123",
+      "status": "completed",
+      "endedReason": "customer-ended-call",
+      "summary": "Reservation confirmed for 2 people at 7:30 PM.",
+      "transcript": "Host confirmed the table."
+    }
+  }'
+```
+
+Then inspect the stored result with:
+
+```json
+{
+  "callId": "call_demo_123"
+}
+```
+
+via the `process_latest_webhook` MCP tool.
+
+### 3. Call the MCP endpoint directly
+
+This server exposes MCP over HTTP at `/mcp`. A minimal tool call request looks like this:
+
+```bash
+curl -X POST http://localhost:8787/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "list-calls-1",
+    "method": "tools/call",
+    "params": {
+      "name": "list_recent_calls",
+      "arguments": {
+        "limit": 5
+      }
+    }
+  }'
+```
+
+For a full MCP client flow, prefer using an MCP client or inspector that handles initialization automatically.
+
 ## Webhook flow
 
 1. Agent invokes `create_reservation_call`.
@@ -142,7 +205,7 @@ This first version is intentionally small:
 
 - file-based storage instead of a database
 - one primary outbound reservation workflow
-- generic webhook persistence plus simple normalization
+- generic webhook persistence plus lightweight payload normalization for common nested Vapi event shapes
 
 That keeps the repo easy to understand and easy to extend for Dedalus or other remote MCP runtimes.
 

@@ -13,20 +13,50 @@ function verifyWebhookSecret(request: Request): boolean {
 }
 
 function deriveCallId(body: unknown): string | undefined {
-  if (!body || typeof body !== "object") {
-    return undefined;
-  }
+  const record = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  const message = record?.message && typeof record.message === "object"
+    ? (record.message as Record<string, unknown>)
+    : null;
+  const call = record?.call && typeof record.call === "object"
+    ? (record.call as Record<string, unknown>)
+    : null;
+  const messageCall = message?.call && typeof message.call === "object"
+    ? (message.call as Record<string, unknown>)
+    : null;
 
-  const record = body as Record<string, unknown>;
-  if (typeof record.callId === "string") {
+  if (typeof record?.callId === "string") {
     return record.callId;
   }
 
-  if (record.call && typeof record.call === "object" && typeof (record.call as Record<string, unknown>).id === "string") {
-    return (record.call as Record<string, string>).id;
+  if (typeof call?.id === "string") {
+    return call.id;
+  }
+
+  if (typeof messageCall?.id === "string") {
+    return messageCall.id;
   }
 
   return undefined;
+}
+
+function deriveEventType(body: Record<string, unknown>): string {
+  const message = body.message && typeof body.message === "object"
+    ? (body.message as Record<string, unknown>)
+    : null;
+
+  if (typeof message?.type === "string") {
+    return message.type;
+  }
+
+  if (typeof body.type === "string") {
+    return body.type;
+  }
+
+  if (typeof body.event === "string") {
+    return body.event;
+  }
+
+  return "unknown";
 }
 
 export function registerWebhookRoutes(app: Express): void {
@@ -41,20 +71,10 @@ export function registerWebhookRoutes(app: Express): void {
     }
 
     const payload = request.body as Record<string, unknown>;
-    const message =
-      payload.message && typeof payload.message === "object"
-        ? (payload.message as Record<string, unknown>)
-        : null;
-    const eventType = typeof message?.type === "string"
-      ? message.type
-      : typeof payload.type === "string"
-        ? payload.type
-        : "unknown";
-
     await saveWebhookRecord({
       id: crypto.randomUUID(),
       receivedAt: new Date().toISOString(),
-      eventType,
+      eventType: deriveEventType(payload),
       callId: deriveCallId(payload),
       payload
     });
