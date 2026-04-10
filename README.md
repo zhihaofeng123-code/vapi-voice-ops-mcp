@@ -1,6 +1,6 @@
 # vapi-voice-ops-mcp
 
-An MCP server that gives AI agents a reusable voice operations interface on top of Vapi, including outbound reservation calls, webhook handling, transcript capture, and structured post-call results.
+A Dedalus-compatible MCP server that gives AI agents a reusable voice operations interface on top of Vapi, including outbound reservation calls, transcript capture, and structured post-call results.
 
 ## Why this exists
 
@@ -33,52 +33,30 @@ Agent
 
 ```text
 vapi-voice-ops-mcp/
-├── src/
-│   ├── index.ts
-│   ├── config.ts
-│   ├── normalize.ts
-│   ├── storage/
-│   ├── tools/
-│   ├── vapi/
-│   └── webhook/
+├── main.py
+├── pyproject.toml
 ├── data/
 ├── .env.example
-├── package.json
-└── tsconfig.json
+└── src/                # TypeScript reference implementation kept for local iteration
 ```
 
 ## Quick start
 
-1. Install dependencies.
+1. Install Python dependencies.
 2. Copy `.env.example` to `.env`.
 3. Set `VAPI_API_KEY` and either `VAPI_ASSISTANT_ID` or pass `assistantId` per tool call.
 4. Start the server:
 
 ```bash
-npm install
-npm run dev
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python main.py
 ```
 
 The process starts:
 
-- an HTTP MCP endpoint on `http://localhost:8787/mcp`
-- an HTTP webhook listener on `http://localhost:8787/webhooks/vapi`
-
-## MCP client configuration
-
-Example local MCP config:
-
-```json
-{
-  "mcpServers": {
-    "vapi-voice-ops": {
-      "command": "npm",
-      "args": ["run", "dev"],
-      "cwd": "/absolute/path/to/vapi-voice-ops-mcp"
-    }
-  }
-}
-```
+- an HTTP MCP endpoint on `http://127.0.0.1:8000/mcp`
 
 ## Environment variables
 
@@ -86,8 +64,6 @@ Example local MCP config:
 VAPI_API_KEY=your_vapi_api_key
 VAPI_BASE_URL=https://api.vapi.ai
 VAPI_ASSISTANT_ID=your_default_assistant_id
-PORT=8787
-WEBHOOK_SECRET=optional_shared_secret
 DATA_DIR=./data
 ```
 
@@ -124,48 +100,13 @@ DATA_DIR=./data
 ### 1. Health check
 
 ```bash
-curl http://localhost:8787/health
+curl http://127.0.0.1:8000/mcp
 ```
-
-Expected response:
-
-```json
-{"ok":true}
-```
-
-### 2. Simulate a webhook
-
-```bash
-curl -X POST http://localhost:8787/webhooks/vapi \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "end-of-call-report",
-    "call": {
-      "id": "call_demo_123",
-      "status": "completed",
-      "endedReason": "customer-ended-call",
-      "summary": "Reservation confirmed for 2 people at 7:30 PM.",
-      "transcript": "Host confirmed the table."
-    }
-  }'
-```
-
-Then inspect the stored result with:
-
-```json
-{
-  "callId": "call_demo_123"
-}
-```
-
-via the `process_latest_webhook` MCP tool.
-
-### 3. Call the MCP endpoint directly
 
 This server exposes MCP over HTTP at `/mcp`. A minimal tool call request looks like this:
 
 ```bash
-curl -X POST http://localhost:8787/mcp \
+curl -X POST http://127.0.0.1:8000/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -186,10 +127,8 @@ For a full MCP client flow, prefer using an MCP client or inspector that handles
 
 1. Agent invokes `create_reservation_call`.
 2. The MCP server triggers a Vapi outbound call.
-3. Vapi posts events to `/webhooks/vapi`.
-4. Webhook payloads are stored in `data/webhooks/`.
-5. Processed call records are stored in `data/calls/`.
-6. Agent uses `get_call_status` or `process_latest_webhook` to retrieve normalized results.
+3. Vapi call metadata is stored in `data/calls/`.
+4. Agent uses `get_call_status` or `process_latest_webhook` to retrieve normalized results.
 
 ## GitHub positioning
 
@@ -205,7 +144,7 @@ This first version is intentionally small:
 
 - file-based storage instead of a database
 - one primary outbound reservation workflow
-- generic webhook persistence plus lightweight payload normalization for common nested Vapi event shapes
+- lightweight payload normalization for common nested Vapi event shapes
 
 That keeps the repo easy to understand and easy to extend for Dedalus or other remote MCP runtimes.
 
