@@ -5,6 +5,7 @@ description = "A Dedalus-compatible MCP server that gives agents reusable voice 
 requires-python = ">=3.11"
 dependencies = [
   "dedalus-mcp",
+  "dedalus-labs",
 ]
 
 [build-system]

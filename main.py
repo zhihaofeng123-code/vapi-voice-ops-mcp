@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from dedalus_mcp import MCPServer, tool
-from dedalus_mcp.server import TransportSecuritySettings
 
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
@@ -364,27 +363,15 @@ def list_recent_calls(limit: int = 10) -> list[dict[str, Any]]:
     return results
 
 
-def create_server() -> MCPServer:
-    server = MCPServer(
-        name="vapi-voice-ops-mcp",
-        http_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-        streamable_http_stateless=True,
-        authorization_server=os.getenv("DEDALUS_AS_URL", "https://as.dedaluslabs.ai"),
-    )
-    server.collect(
-        create_reservation_call,
-        get_call_status,
-        process_latest_webhook,
-        list_recent_calls,
-    )
-    return server
-
-
-async def main() -> None:
-    ensure_storage()
-    server = create_server()
-    await server.serve(port=8080, verbose=True, log_level=os.getenv("LOG_LEVEL", "debug"))
+server = MCPServer("vapi-voice-ops-mcp")
+server.collect(
+    create_reservation_call,
+    get_call_status,
+    process_latest_webhook,
+    list_recent_calls,
+)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    ensure_storage()
+    asyncio.run(server.serve())
