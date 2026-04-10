@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vapi-voice-ops": {
+      "command": "npm",
+      "args": ["run", "dev"],
+      "cwd": "/absolute/path/to/vapi-voice-ops-mcp"
+    }
+  }
+}
