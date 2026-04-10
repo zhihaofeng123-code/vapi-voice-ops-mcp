@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from dedalus_mcp import MCPServer, tool
 
@@ -27,13 +27,13 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def read_json(path: Path) -> dict[str, Any] | None:
+def read_json(path: Path) -> Optional[Dict[str, Any]]:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def write_json(path: Path, value: dict[str, Any]) -> None:
+def write_json(path: Path, value: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2), encoding="utf-8")
 
@@ -42,17 +42,17 @@ def get_call_path(call_id: str) -> Path:
     return CALLS_DIR / f"{call_id}.json"
 
 
-def save_call_record(record: dict[str, Any]) -> None:
+def save_call_record(record: Dict[str, Any]) -> None:
     write_json(get_call_path(record["callId"]), record)
 
 
-def get_call_record(call_id: str) -> dict[str, Any] | None:
+def get_call_record(call_id: str) -> Optional[Dict[str, Any]]:
     return read_json(get_call_path(call_id))
 
 
-def list_call_records(limit: int = 10) -> list[dict[str, Any]]:
+def list_call_records(limit: int = 10) -> List[Dict[str, Any]]:
     ensure_storage()
-    records: list[dict[str, Any]] = []
+    records: List[Dict[str, Any]] = []
     for path in CALLS_DIR.glob("*.json"):
         record = read_json(path)
         if record:
@@ -61,9 +61,9 @@ def list_call_records(limit: int = 10) -> list[dict[str, Any]]:
     return records[:limit]
 
 
-def list_webhook_records(limit: int = 50) -> list[dict[str, Any]]:
+def list_webhook_records(limit: int = 50) -> List[Dict[str, Any]]:
     ensure_storage()
-    records: list[dict[str, Any]] = []
+    records: List[Dict[str, Any]] = []
     for path in WEBHOOKS_DIR.glob("*.json"):
         record = read_json(path)
         if record:
@@ -72,7 +72,7 @@ def list_webhook_records(limit: int = 50) -> list[dict[str, Any]]:
     return records[:limit]
 
 
-def normalize_call_outcome(summary: str | None, transcript: str | None) -> dict[str, Any]:
+def normalize_call_outcome(summary: Optional[str], transcript: Optional[str]) -> Dict[str, Any]:
     combined = f"{summary or ''}\n{transcript or ''}".lower()
     confirmed = any(token in combined for token in ["confirmed", "reservation is booked", "see you"])
     rejected = any(token in combined for token in ["unable", "not available", "no reservation", "fully booked"])
@@ -101,7 +101,7 @@ def normalize_call_outcome(summary: str | None, transcript: str | None) -> dict[
     }
 
 
-def get_nested_value(payload: Any, paths: list[list[str]]) -> Any:
+def get_nested_value(payload: Any, paths: List[List[str]]) -> Any:
     for path in paths:
         current = payload
         for segment in path:
@@ -114,12 +114,12 @@ def get_nested_value(payload: Any, paths: list[list[str]]) -> Any:
     return None
 
 
-def get_nested_string(payload: Any, paths: list[list[str]]) -> str | None:
+def get_nested_string(payload: Any, paths: List[List[str]]) -> Optional[str]:
     value = get_nested_value(payload, paths)
     return value if isinstance(value, str) else None
 
 
-def get_transcript(payload: Any) -> str | None:
+def get_transcript(payload: Any) -> Optional[str]:
     direct = get_nested_string(payload, [
         ["transcript"],
         ["call", "transcript"],
@@ -138,7 +138,7 @@ def get_transcript(payload: Any) -> str | None:
     if not isinstance(messages, list):
         return None
 
-    lines: list[str] = []
+    lines: List[str] = []
     for entry in messages:
         if not isinstance(entry, dict):
             continue
@@ -150,7 +150,7 @@ def get_transcript(payload: Any) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def vapi_request(path: str, method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def vapi_request(path: str, method: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if not VAPI_API_KEY:
         raise ValueError("Missing VAPI_API_KEY environment variable")
 
@@ -178,7 +178,7 @@ def build_reservation_prompt(
     party_size: int,
     date: str,
     time: str,
-    notes: str | None,
+    notes: Optional[str],
 ) -> str:
     parts = [
         "You are calling a restaurant to request a reservation.",
@@ -203,7 +203,7 @@ def create_reservation_call(
     time: str,
     notes: str = "",
     assistantId: str = "",
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     ensure_storage()
 
     resolved_assistant_id = assistantId or DEFAULT_ASSISTANT_ID
@@ -262,7 +262,7 @@ def create_reservation_call(
 
 
 @tool(description="Fetch the latest status, transcript, and summary for a Vapi call.")
-def get_call_status(callId: str) -> dict[str, Any]:
+def get_call_status(callId: str) -> Dict[str, Any]:
     ensure_storage()
     existing = get_call_record(callId) or {}
     response = vapi_request(f"/call/{callId}", "GET")
@@ -287,7 +287,7 @@ def get_call_status(callId: str) -> dict[str, Any]:
 
 
 @tool(description="Normalize the latest stored Vapi webhook into a structured call result.")
-def process_latest_webhook(callId: str = "") -> dict[str, Any]:
+def process_latest_webhook(callId: str = "") -> Dict[str, Any]:
     ensure_storage()
     webhooks = list_webhook_records()
     target = next((item for item in webhooks if item.get("callId") == callId), None) if callId else (webhooks[0] if webhooks else None)
@@ -345,9 +345,9 @@ def process_latest_webhook(callId: str = "") -> dict[str, Any]:
 
 
 @tool(description="List recent locally stored call records.")
-def list_recent_calls(limit: int = 10) -> list[dict[str, Any]]:
+def list_recent_calls(limit: int = 10) -> List[Dict[str, Any]]:
     ensure_storage()
-    results: list[dict[str, Any]] = []
+    results: List[Dict[str, Any]] = []
     for call in list_call_records(limit):
         request = call.get("request", {})
         results.append(
