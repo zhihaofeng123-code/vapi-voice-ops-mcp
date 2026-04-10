@@ -1,14 +1,16 @@
-import express, { type Request, type Response } from "express";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { appConfig } from "./config.js";
 import { ensureStorage } from "./storage/files.js";
-import { registerWebhookRoutes } from "./webhook/server.js";
 import { createReservationCall } from "./tools/createReservationCall.js";
 import { getCallStatus } from "./tools/getCallStatus.js";
 import { listRecentCalls } from "./tools/listRecentCalls.js";
 import { processLatestWebhook } from "./tools/processLatestWebhook.js";
+import { handleWebhookRequest } from "./webhook/server.js";
 
 function buildMcpServer(): McpServer {
   const server = new McpServer(
@@ -35,12 +37,7 @@ function buildMcpServer(): McpServer {
       assistantId: z.string().optional().describe("Optional Vapi assistant override.")
     }
   }, async (args) => ({
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(await createReservationCall(args), null, 2)
-      }
-    ]
+    content: [{ type: "text", text: JSON.stringify(await createReservationCall(args), null, 2) }]
   }));
 
   server.registerTool("get_call_status", {
@@ -49,12 +46,7 @@ function buildMcpServer(): McpServer {
       callId: z.string().min(1)
     }
   }, async (args) => ({
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(await getCallStatus(args), null, 2)
-      }
-    ]
+    content: [{ type: "text", text: JSON.stringify(await getCallStatus(args), null, 2) }]
   }));
 
   server.registerTool("process_latest_webhook", {
@@ -63,12 +55,7 @@ function buildMcpServer(): McpServer {
       callId: z.string().optional()
     }
   }, async (args) => ({
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(await processLatestWebhook(args), null, 2)
-      }
-    ]
+    content: [{ type: "text", text: JSON.stringify(await processLatestWebhook(args), null, 2) }]
   }));
 
   server.registerTool("list_recent_calls", {
@@ -77,75 +64,116 @@ function buildMcpServer(): McpServer {
       limit: z.number().int().positive().max(100).optional()
     }
   }, async (args) => ({
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(await listRecentCalls(args), null, 2)
-      }
-    ]
+    content: [{ type: "text", text: JSON.stringify(await listRecentCalls(args), null, 2) }]
   }));
 
   return server;
 }
 
-async function main(): Promise<void> {
+async function handleMcpRequest(request: Request): Promise<Response> {
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined
+  });
+  const server = buildMcpServer();
+
+  try {
+    await server.connect(transport);
+    return await transport.handleRequest(request);
+  } finally {
+    await transport.close();
+    await server.close();
+  }
+}
+
+export async function fetch(request: Request): Promise<Response> {
   await ensureStorage();
 
-  const app = express();
-  app.use(express.json({ limit: "2mb" }));
+  const url = new URL(request.url);
 
-  registerWebhookRoutes(app);
+  if (url.pathname === "/health" && request.method === "GET") {
+    return Response.json({ ok: true });
+  }
 
-  app.post("/mcp", async (request: Request, response: Response) => {
-    const server = buildMcpServer();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined
-    });
+  if (url.pathname === "/webhooks/vapi" && request.method === "POST") {
+    return handleWebhookRequest(request);
+  }
 
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(request, response, request.body);
-    } catch (error) {
-      console.error("Error handling MCP request:", error);
+  if (url.pathname === "/mcp") {
+    return handleMcpRequest(request);
+  }
 
-      if (!response.headersSent) {
-        response.status(500).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Internal server error"
-          },
-          id: null
-        });
+  return Response.json({ error: "Not found" }, { status: 404 });
+}
+
+export default { fetch };
+
+async function toWebRequest(request: IncomingMessage): Promise<Request> {
+  const origin = `http://${request.headers.host ?? `127.0.0.1:${appConfig.port}`}`;
+  const url = new URL(request.url ?? "/", origin);
+  const method = request.method ?? "GET";
+  const headers = new Headers();
+
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        headers.append(key, item);
       }
-    } finally {
-      response.on("close", () => {
-        void transport.close();
-        void server.close();
-      });
+    } else if (typeof value === "string") {
+      headers.set(key, value);
+    }
+  }
+
+  if (method === "GET" || method === "HEAD") {
+    return new Request(url, { method, headers });
+  }
+
+  return new Request(url, {
+    method,
+    headers,
+    body: Readable.toWeb(request) as ReadableStream,
+    duplex: "half"
+  } as RequestInit);
+}
+
+async function writeNodeResponse(response: Response, serverResponse: ServerResponse): Promise<void> {
+  serverResponse.statusCode = response.status;
+  response.headers.forEach((value, key) => {
+    serverResponse.setHeader(key, value);
+  });
+
+  if (!response.body) {
+    serverResponse.end();
+    return;
+  }
+
+  const body = Readable.fromWeb(response.body as any);
+  body.pipe(serverResponse);
+}
+
+async function startLocalServer(): Promise<void> {
+  await ensureStorage();
+
+  const server = createServer(async (request, response) => {
+    try {
+      const webRequest = await toWebRequest(request);
+      const webResponse = await fetch(webRequest);
+      await writeNodeResponse(webResponse, response);
+    } catch (error) {
+      console.error("Local server error:", error);
+      response.statusCode = 500;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ error: "Internal server error" }));
     }
   });
 
-  const methodNotAllowed = (_request: Request, response: Response) => {
-    response.status(405).json({
-      jsonrpc: "2.0",
-      error: {
-        code: -32000,
-        message: "Method not allowed."
-      },
-      id: null
-    });
-  };
-
-  app.get("/mcp", methodNotAllowed);
-  app.delete("/mcp", methodNotAllowed);
-
-  app.listen(appConfig.port, () => {
+  server.listen(appConfig.port, () => {
     console.error(`HTTP server listening on port ${appConfig.port}`);
   });
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startLocalServer().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

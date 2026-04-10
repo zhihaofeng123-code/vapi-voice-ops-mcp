@@ -1,15 +1,17 @@
-import type { Express, Request, Response } from "express";
 import crypto from "node:crypto";
 import { appConfig } from "../config.js";
 import { saveWebhookRecord } from "../storage/files.js";
 
-function verifyWebhookSecret(request: Request): boolean {
+function getHeader(headers: Headers, name: string): string | null {
+  return headers.get(name);
+}
+
+function verifyWebhookSecret(headers: Headers): boolean {
   if (!appConfig.webhookSecret) {
     return true;
   }
 
-  const header = request.header("x-webhook-secret");
-  return header === appConfig.webhookSecret;
+  return getHeader(headers, "x-webhook-secret") === appConfig.webhookSecret;
 }
 
 function deriveCallId(body: unknown): string | undefined {
@@ -59,26 +61,20 @@ function deriveEventType(body: Record<string, unknown>): string {
   return "unknown";
 }
 
-export function registerWebhookRoutes(app: Express): void {
-  app.get("/health", (_request: Request, response: Response) => {
-    response.json({ ok: true });
+export async function handleWebhookRequest(request: Request): Promise<Response> {
+  if (!verifyWebhookSecret(request.headers)) {
+    return Response.json({ error: "Unauthorized webhook" }, { status: 401 });
+  }
+
+  const payload = await request.json() as Record<string, unknown>;
+
+  await saveWebhookRecord({
+    id: crypto.randomUUID(),
+    receivedAt: new Date().toISOString(),
+    eventType: deriveEventType(payload),
+    callId: deriveCallId(payload),
+    payload
   });
 
-  app.post("/webhooks/vapi", async (request: Request, response: Response) => {
-    if (!verifyWebhookSecret(request)) {
-      response.status(401).json({ error: "Unauthorized webhook" });
-      return;
-    }
-
-    const payload = request.body as Record<string, unknown>;
-    await saveWebhookRecord({
-      id: crypto.randomUUID(),
-      receivedAt: new Date().toISOString(),
-      eventType: deriveEventType(payload),
-      callId: deriveCallId(payload),
-      payload
-    });
-
-    response.json({ ok: true });
-  });
+  return Response.json({ ok: true });
 }
